@@ -1,4 +1,5 @@
-
+import numpy as np
+import dgl
 import argparse
 import os
 import pickle
@@ -7,16 +8,44 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from builder import PandasGraphBuilder
 from data_utils import *
-import dgl
 from scipy.sparse import csr_matrix
-
+from sklearn.metrics.pairwise import cosine_similarity
 
 # 유사도 함수 수정해야함 -> 유사도 어떻게 계산할지 정하기
+
+
+'''
+# 카테고리 리스트와 원-핫 인코딩 생성
+categories = ["게임", "과학기술", "교육", "노하우/스타일", "뉴스/정치", "스포츠",
+              "비영리/사회운동", "애완동물/동물", "엔터테인먼트", "여행/이벤트",
+              "영화/애니메이션", "음악", "인물/블로그", "자동차/교통", "코미디", "기타"]
+
+category_to_index = {cat: idx for idx, cat in enumerate(categories)}
+num_categories = len(categories)
+
+# 특정 카테고리의 원-핫 벡터 생성 함수
+def one_hot_vector(category):
+    vec = np.zeros(num_categories)
+    if category in category_to_index:
+        vec[category_to_index[category]] = 1
+    return vec
+
+# 코사인 유사도 기반 유사도 계산 함수
+def cal_similarity(creator_s, item_s):
+    creator_vec = one_hot_vector(creator_s)
+    item_vec = one_hot_vector(item_s)
+    similarity = cosine_similarity([creator_vec], [item_vec])[0][0]
+    return similarity
+'''
+
+
+
+
 def cal_similarity(creator_s,item_s):
-    if creator_s == item_s:  # 수정
-        return 1.0  # 유사도가 완전히 일치하면 1
-    else:
-        return 0.0  # 일치하지 않으면 0
+     if creator_s == item_s:  # 수정
+         return 1.0  # 유사도가 완전히 일치하면 1
+     else:
+         return 0.0  # 일치하지 않으면 0
 
 
 # Load data
@@ -53,6 +82,7 @@ def process_data(directory,out_directory):
             similarity = cal_similarity(
                 creator_row['channel_category'], proposal_row['item_category']
             )
+            print(f"Similarity between creator {i} and item {j}: {similarity}")   #delete
             if similarity > 0:  # 유사도가 0 이상일 때만 엣지 추가
                 edges_src.append(creator_row['creator_id'])
                 edges_dst.append(proposal_row['item_id'])
@@ -64,7 +94,11 @@ def process_data(directory,out_directory):
         'similarity': similarities
     })
 
-
+    if edge_df.empty:
+        print("edge_df가 비어 있습니다. 유사도를 만족하는 엣지가 없습니다.")
+        return
+    else:
+        print(edge_df.head())  # edge_df 내용 확인
 
     # Add binary relations to the graph
     # creator -> item 방향의 엣지
@@ -154,19 +188,7 @@ if __name__ == '__main__':
 
     process_data(args.directory, args.out_directory)
 
-'''
-DGL은 torch 2.4에서 미구현 되어 2.3으로 다운 그레이드
-!pip uninstall torch -y
-!pip install torch==2.1.2 torchvisio n==0.18.1 torchaudio==2.3.1
 
-
-!pip install  dgl -f https://data.dgl.ai/wheels/torch-2.3/cu121/repo.html
-
-
-pip install  dgl -f https://data.dgl.ai/wheels/torch-2.3/repo.html
-pip install dgl -f https://data.dgl.ai/wheels/repo.html
-pip install torch==2.3.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-'''
 
 """
 output
