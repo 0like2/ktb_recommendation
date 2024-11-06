@@ -57,7 +57,11 @@ def train(dataset, args):
     g = dataset["train-graph"]
     val_matrix = dataset["val-matrix"].tocsr()
     test_matrix = dataset["test-matrix"].tocsr()
-    item_texts = dataset["item-texts"]
+
+    # item-texts 구조 언팩
+    item_texts_data = dataset.get("item-texts", {})
+    item_texts_list, vocab, pad_token, batch_first = item_texts_data["item-texts"]
+
     user_ntype = dataset["user-type"]
     item_ntype = dataset["item-type"]
 
@@ -65,23 +69,13 @@ def train(dataset, args):
 
     # Prepare torchtext dataset and vocabulary
     textset = {}
-    tokenizer = get_tokenizer(None)
+    tokenizer = get_tokenizer("basic_english")  # 기본 토크나이저를 사용하도록 설정
 
-    textlist = []
-    batch_first = True
-
-    # 수정된 코드(item text 이슈)
-    for i in range(g.num_nodes(item_ntype)):
-        l = tokenizer(item_texts[i].lower())
-        textlist.append(l)
-
-    vocab2 = build_vocab_from_iterator(
-        textlist, specials=["<unk>", "<pad>"]
-    )
+    # 이미 토큰화된 item_texts_list 사용
     textset["item-texts"] = (
-        textlist,
-        vocab2,
-        vocab2.get_stoi()["<pad>"],
+        item_texts_list,
+        vocab,
+        pad_token,
         batch_first,
     )
 
@@ -98,8 +92,8 @@ def train(dataset, args):
         args.num_random_walks,
         args.num_neighbors,
         args.num_layers,
-        user_to_item_etype= "creator_to_item",  # 새로운 엣지 타입 반영
-        item_to_user_etype= "item_to_creator"   # 새로운 엣지 타입 반영
+        user_to_item_etype="creator_to_item",  # 새로운 엣지 타입 반영
+        item_to_user_etype="item_to_creator"  # 새로운 엣지 타입 반영
     )
     collator = sampler_module.PinSAGECollator(
         neighbor_sampler, g, item_ntype, textset
@@ -151,83 +145,12 @@ def train(dataset, args):
             opt.step()
             opt_emb.step()
 
-        # Evaluate
-        '''
-        model.eval()
-        with torch.no_grad():
-            item_batches = torch.arange(g.num_nodes(item_ntype)).split(
-                args.batch_size
-            )
-            h_item_batches = []
-            for blocks in tqdm.tqdm(dataloader_test):
-                for i in range(len(blocks)):
-                    blocks[i] = blocks[i].to(device)
-                h_item_batches.append(model.get_repr(blocks, item_emb))
-            h_item = torch.cat(h_item_batches, 0)
+    return model, item_emb
 
-            print(
-                evaluation.evaluate_nn(dataset, h_item, args.k, args.batch_size)
-            )
-        '''
 
-    '''
-    dataloader_test = DataLoader(
-        torch.arange(g.num_nodes(item_ntype)),
-        batch_size=args.batch_size,
-        collate_fn=collator.collate_test,
-        num_workers=args.num_workers,
-    )
-    '''
-    dataloader_it = iter(dataloader)
 
-    # Model
-    model = PinSAGEModel(
-        g, item_ntype, textset, args.hidden_dims, args.num_layers
-    ).to(device)
-    item_emb = nn.Embedding(
-        g.num_nodes(item_ntype), args.hidden_dims, sparse=True
-    )
-    # Optimizer
-    opt = torch.optim.Adam(model.parameters(), lr=args.lr)
-    opt_emb = torch.optim.SparseAdam(item_emb.parameters(), lr=args.lr)
 
-    # For each batch of head-tail-negative triplets...
-    for epoch_id in range(args.num_epochs):
-        model.train()
-        for batch_id in tqdm.trange(args.batches_per_epoch):
-            pos_graph, neg_graph, blocks = next(dataloader_it)
-            # Copy to GPU
-            for i in range(len(blocks)):
-                blocks[i] = blocks[i].to(device)
-            pos_graph = pos_graph.to(device)
-            neg_graph = neg_graph.to(device)
 
-            loss = model(pos_graph, neg_graph, blocks, item_emb).mean()
-            opt.zero_grad()
-            opt_emb.zero_grad()
-            loss.backward()
-            opt.step()
-            opt_emb.step()
-
-        # Evaluate
-        model.eval()
-        with torch.no_grad():
-            item_batches = torch.arange(g.num_nodes(item_ntype)).split(
-                args.batch_size
-            )
-            h_item_batches = []
-            for blocks in tqdm.tqdm(dataloader_test):
-                for i in range(len(blocks)):
-                    blocks[i] = blocks[i].to(device)
-
-                h_item_batches.append(model.get_repr(blocks, item_emb))
-            h_item = torch.cat(h_item_batches, 0)
-            '''
-            print(
-                evaluation.evaluate_nn(dataset, h_item, args.k, args.batch_size)
-            )
-            '''
-    return model, item_emb  # 학습이 완료된 모델과 임베딩을 반환
 
 
 if __name__ == "__main__":

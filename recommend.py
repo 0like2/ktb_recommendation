@@ -5,18 +5,28 @@ import dgl
 from model_recommend import PinSAGEModel
 
 
-def load_model_and_embeddings(model_path, item_emb_path, graph_path):
-    # 학습된 모델, 임베딩 및 그래프 로드
+def load_model_and_embeddings(model_path, item_emb_path, graph_path, data_path):
+    # 학습된 모델, 임베딩, 그래프 로드
     g_list, _ = dgl.load_graphs(graph_path)
     graph = g_list[0]
 
-    model = PinSAGEModel(graph, "item", None, hidden_dims=16, n_layers=2)
+    # 데이터셋 파일 로드 및 textsets 생성
+    with open(data_path, "rb") as f:
+        dataset = pickle.load(f)
+
+    # textsets을 데이터셋에서 로드
+    item_texts = dataset.get("item-texts", [])
+    textsets = {"item-texts": item_texts} if item_texts else None
+
+    # 모델 생성 시 일관된 textsets 전달
+    model = PinSAGEModel(graph, "item", textsets, hidden_dims=16, n_layers=2)
     item_emb = torch.nn.Embedding(graph.num_nodes("item"), 16, sparse=True)
 
     model.load_state_dict(torch.load(model_path))
     item_emb.load_state_dict(torch.load(item_emb_path))
 
     return model, item_emb, graph
+
 
 
 def is_creator_or_item(new_data):
@@ -74,9 +84,10 @@ if __name__ == "__main__":
     model_path = os.path.join(output_dir, "saved_model.pth")
     item_emb_path = os.path.join(output_dir, "item_embedding.pth")
     graph_path = os.path.join(output_dir, "train_g.bin")
+    data_path = os.path.join(output_dir, "data.pkl")
 
     # 모델, 임베딩, 그래프 로드
-    model, item_emb, graph = load_model_and_embeddings(model_path, item_emb_path, graph_path)
+    model, item_emb, graph = load_model_and_embeddings(model_path, item_emb_path, graph_path, data_path)
 
     # 아이템 임베딩 계산
     h_item = item_emb.weight.detach()
