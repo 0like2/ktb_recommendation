@@ -10,6 +10,8 @@ from builder import PandasGraphBuilder
 from data_utils import *
 from scipy.sparse import csr_matrix
 from sklearn.metrics.pairwise import cosine_similarity
+from torchtext.vocab import build_vocab_from_iterator
+from torchtext.data.utils import get_tokenizer
 
 # 유사도 함수 수정해야함 -> 유사도 어떻게 계산할지 정하기
 
@@ -58,8 +60,8 @@ def process_data(directory,out_directory):
     """
 
     # pandas data load
-    creator_df = pd.read_csv(os.path.join(directory, "Creator_random.csv"))
-    item_df = pd.read_csv(os.path.join(directory, "Item_random.csv"))
+    creator_df = pd.read_csv(os.path.join(directory, "Creator_random25.csv"))
+    item_df = pd.read_csv(os.path.join(directory, "Item_random25.csv"))
 
     # Build graph
     graph_builder = PandasGraphBuilder()
@@ -82,7 +84,6 @@ def process_data(directory,out_directory):
             similarity = cal_similarity(
                 creator_row['channel_category'], proposal_row['item_category']
             )
-            print(f"Similarity between creator {i} and item {j}: {similarity}")   #delete
             if similarity > 0:  # 유사도가 0 이상일 때만 엣지 추가
                 edges_src.append(creator_row['creator_id'])
                 edges_dst.append(proposal_row['item_id'])
@@ -114,12 +115,11 @@ def process_data(directory,out_directory):
     print("메타그래프:", g.metagraph().edges)  # 메타그래프 엣지 확인
 
     # 5. Assign features to Node
-    for feature in ["channel_name", "channel_category", "max_views", "min_views", "media_type", "subscribers",
-                    "comments"]:
+    for feature in ["channel_name", "channel_category", "subscribers"]:
         if creator_df[feature].dtype == 'int64':
             g.nodes["creator"].data[feature] = torch.LongTensor(creator_df[feature].values)
         else:
-            g.nodes["creator"].data[feature] = torch.LongTensor(pd.factorize(creator_df[feature])[0])  # Embedding 수정해야할 수도 있음
+            g.nodes["creator"].data[feature] = torch.LongTensor(pd.factorize(creator_df[feature])[0])
 
     for feature in ["title", "item_category", "media_type", "score", "item_content"] :
         if item_df[feature].dtype == 'int64':
@@ -131,16 +131,23 @@ def process_data(directory,out_directory):
     g.edges[("creator", "creator_to_item", "item")].data['similarity'] = torch.FloatTensor(similarities)
     g.edges[("item", "item_to_creator", "creator")].data['similarity'] = torch.FloatTensor(similarities)
 
+    item_texts = item_df['item_content'].fillna("").tolist()
+    tokenizer = get_tokenizer(None)
+    textlist = [tokenizer(text.lower()) for text in item_texts]
+    vocab = build_vocab_from_iterator(textlist, specials=["<unk>", "<pad>"])
+    vocab.set_default_index(vocab["<unk>"])  # OOV 토큰 처리 기본 인덱스 설정
+    pad_var = vocab["<pad>"]
+    textset = {"item-texts": (textlist, vocab, pad_var, True)}
+
     # 7. Train-validation-test split
     # This is a little bit tricky as we want to select the last interaction for test, and the
     # second-to-last interaction for validation.
 
     # Train-Validation-Test Split (무작위 분할)
-    train_indices, temp_indices = train_test_split(edge_df.index, test_size=0.3, random_state=42)
+    train_indices, temp_indices = train_test_split(edge_df.index, test_size=0.2, random_state=42)
     val_indices, test_indices = train_test_split(temp_indices, test_size=0.5, random_state=42)
 
 
-    # Train graph generation
     # Train graph generation
     train_g = dgl.edge_subgraph(
         g,
@@ -156,6 +163,9 @@ def process_data(directory,out_directory):
     test_matrix = csr_matrix(
         edge_df.iloc[test_indices].pivot(index='creator_id', columns='item_id', values='similarity').fillna(0).values)
 
+    # vocab 크기 확인
+    print("Vocabulary size in process_data.py:", len(vocab))
+
     # 그래프 및 데이터셋 저장
     os.makedirs(out_directory, exist_ok=True)
     dgl.save_graphs(os.path.join(out_directory, "train_g.bin"), train_g)
@@ -167,8 +177,17 @@ def process_data(directory,out_directory):
         "item-type": "item",
         "user-to-item-type": "creator_to_item",
         "item-to-user-type": "item_to_creator",
+        "item-texts": item_texts,  # item-content를 리스트 형태로 추가
+        "textset": textset         # 생성한 textset 추가
     }
 
+    with open(os.path.join(out_directory, "data.pkl"), "wb") as f:
+        pickle.dump(dataset, f)
+
+
+
+
+    '''
     # item-texts 추가
     item_texts = item_df['item_content'].tolist()  # 'item_content' 열을 'item-texts'로 추가
     dataset["item-texts"] = item_texts
@@ -177,7 +196,7 @@ def process_data(directory,out_directory):
         pickle.dump(dataset, f)
 
     return "Graph and dataset successfully saved!"
-
+    '''
 
 # 메인 함수
 if __name__ == '__main__':

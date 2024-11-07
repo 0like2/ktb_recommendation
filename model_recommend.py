@@ -24,11 +24,12 @@ from torchtext.vocab import build_vocab_from_iterator
 from torch.utils.data import TensorDataset
 
 class PinSAGEModel(nn.Module):
-    def __init__(self, full_graph, ntype, textsets, hidden_dims, n_layers):
+    def __init__(self, full_graph, ntype, textset, hidden_dims, n_layers):
         super().__init__()
 
+        #testset 관련 부분
         self.proj = layers.LinearProjector(
-            full_graph, ntype, textsets, hidden_dims
+            full_graph, ntype, textset, hidden_dims
         )
         self.sage = layers.SAGENet(hidden_dims, n_layers)
         self.scorer = layers.ItemToItemScorer(full_graph, ntype)
@@ -53,6 +54,7 @@ class PinSAGEModel(nn.Module):
         return h_item_dst + self.sage(blocks, h_item)
 
 
+
 def train(dataset, args):
     g = dataset["train-graph"]
     val_matrix = dataset["val-matrix"].tocsr()
@@ -63,27 +65,21 @@ def train(dataset, args):
 
     device = torch.device(args.device)
 
-    # Prepare torchtext dataset and vocabulary
-    textset = {}
-    tokenizer = get_tokenizer(None)
+    # data.pkl에서 저장된 textset 불러오기
+    textset = dataset.get("textset", None)
+    if textset is None:
+        raise ValueError("Textset not found in dataset. Ensure data.pkl includes textset.")
 
-    textlist = []
-    batch_first = True
+    vocab = textset["item-texts"][1]
+    vocab.set_default_index(vocab["<unk>"])
+    pad_var = textset["item-texts"][2]
+    batch_first = textset["item-texts"][3]
 
-    # 수정된 코드(item text 이슈)
-    for i in range(g.num_nodes(item_ntype)):
-        l = tokenizer(item_texts[i].lower())
-        textlist.append(l)
+    print("Loaded vocabulary size from data.pkl:", len(vocab))
 
-    vocab2 = build_vocab_from_iterator(
-        textlist, specials=["<unk>", "<pad>"]
-    )
-    textset["item-texts"] = (
-        textlist,
-        vocab2,
-        vocab2.get_stoi()["<pad>"],
-        batch_first,
-    )
+    # textset 그대로 사용
+    textset = {"item-texts": (item_texts, vocab, pad_var, batch_first)}
+
 
     # Sampler
     batch_sampler = sampler_module.ItemToItemBatchSampler(
@@ -134,6 +130,7 @@ def train(dataset, args):
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
     opt_emb = torch.optim.SparseAdam(item_emb.parameters(), lr=args.lr)
 
+
     # For each batch of head-tail-negative triplets...
     for epoch_id in range(args.num_epochs):
         model.train()
@@ -150,6 +147,7 @@ def train(dataset, args):
             loss.backward()
             opt.step()
             opt_emb.step()
+
 
         # Evaluate
         '''
@@ -209,6 +207,13 @@ def train(dataset, args):
             opt.step()
             opt_emb.step()
 
+    # 학습이 완료된 모델과 임베딩 저장
+    torch.save(model.state_dict(), os.path.join(args.output_dir, "saved_model.pth"))
+    torch.save(item_emb.state_dict(), os.path.join(args.output_dir, "item_embedding.pth"))
+
+    return model, item_emb  # 학습이 완료된 모델과 임베딩을 반환
+
+    '''
         # Evaluate
         model.eval()
         with torch.no_grad():
@@ -222,40 +227,9 @@ def train(dataset, args):
 
                 h_item_batches.append(model.get_repr(blocks, item_emb))
             h_item = torch.cat(h_item_batches, 0)
-            '''
+          
             print(
                 evaluation.evaluate_nn(dataset, h_item, args.k, args.batch_size)
             )
-            '''
-    return model, item_emb  # 학습이 완료된 모델과 임베딩을 반환
-
-
-if __name__ == "__main__":
-    # Arguments
-    parser = argparse.ArgumentParser()
-    parser.add_argument("dataset_path", type=str)
-    parser.add_argument("--random-walk-length", type=int, default=2)
-    parser.add_argument("--random-walk-restart-prob", type=float, default=0.5)
-    parser.add_argument("--num-random-walks", type=int, default=10)
-    parser.add_argument("--num-neighbors", type=int, default=3)
-    parser.add_argument("--num-layers", type=int, default=2)
-    parser.add_argument("--hidden-dims", type=int, default=16)
-    parser.add_argument("--batch-size", type=int, default=32)
-    parser.add_argument(
-        "--device", type=str, default="cpu"
-    )  # can also be "cuda:0"
-    parser.add_argument("--num-epochs", type=int, default=1)
-    parser.add_argument("--batches-per-epoch", type=int, default=20000)
-    parser.add_argument("--num-workers", type=int, default=0)
-    parser.add_argument("--lr", type=float, default=3e-5)
-    parser.add_argument("-k", type=int, default=10)
-    args = parser.parse_args()
-
-    # Load dataset
-    data_info_path = os.path.join(args.dataset_path, "data.pkl")
-    with open(data_info_path, "rb") as f:
-        dataset = pickle.load(f)
-    train_g_path = os.path.join(args.dataset_path, "train_g.bin")
-    g_list, _ = dgl.load_graphs(train_g_path)
-    dataset["train-graph"] = g_list[0]
-    train(dataset, args)
+          
+    '''
