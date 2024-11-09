@@ -208,7 +208,14 @@ def train(dataset, args):
             opt_emb.step()
 
     # 학습이 완료된 모델과 임베딩 저장
+    print("Saving model state_dict to saved_model.pth...")
     torch.save(model.state_dict(), os.path.join(args.output_dir, "saved_model.pth"))
+    # item_emb를 state_dict 형식으로 저장하기 전 확인용 출력문 추가
+
+    # item_emb 저장 방식 확인
+    item_emb_state_dict = item_emb.state_dict()
+    print("Type of item_emb state_dict before saving:", type(item_emb_state_dict))
+    print("Saving item_emb state_dict to item_embedding.pth...")
     torch.save(item_emb.state_dict(), os.path.join(args.output_dir, "item_embedding.pth"))
 
     return model, item_emb  # 학습이 완료된 모델과 임베딩을 반환

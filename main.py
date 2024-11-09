@@ -34,10 +34,16 @@ def main(args):
     # 4. 학습 완료 후 모델과 임베딩 저장
     model_save_path = os.path.join(args.output_dir, "saved_model.pth")
     item_embedding_save_path = os.path.join(args.output_dir, "item_embedding.pth")
+
+    print(f"Saving model state_dict to {model_save_path}...")
     torch.save(model.state_dict(), model_save_path)
-    torch.save(item_emb.weight.data, item_embedding_save_path)
+
+    # item_emb의 state_dict 저장 및 확인
+    print("Type of item_emb state_dict before saving:", type(item_emb.state_dict()))
+    torch.save(item_emb.state_dict(), item_embedding_save_path)  # state_dict로 저장
     print(f"모델이 {model_save_path}에 저장되었습니다.")
     print(f"아이템 임베딩이 {item_embedding_save_path}에 저장되었습니다.")
+
 
 if __name__ == "__main__":
     # Argument 파서 설정
