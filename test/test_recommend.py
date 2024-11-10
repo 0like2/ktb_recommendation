@@ -47,42 +47,46 @@ def load_model_and_embeddings(model_path, item_emb_path, graph_path, data_path):
 
     return model, item_emb, graph
 
+if __name__ == "__main__":
+    output_dir = "/Users/iyeonglag/PycharmProjects/ktb_recommendation/output"  # 경로 추후 수정
+    model_path = os.path.join(output_dir, "saved_model.pth")
+    item_emb_path = os.path.join(output_dir, "item_embedding.pth")
+    graph_path = os.path.join(output_dir, "train_g.bin")
+    data_path = os.path.join(output_dir, "data.pkl")
 
-# 경로 설정
-output_dir = "/Users/iyeonglag/PycharmProjects/ktb_recommendation/output"  # 경로 추후 수정
-model_path = os.path.join(output_dir, "saved_model.pth")
-item_emb_path = os.path.join(output_dir, "item_embedding.pth")
-graph_path = os.path.join(output_dir, "train_g.bin")
-data_path = os.path.join(output_dir, "data.pkl")
+    # 경로 존재 여부 확인
+    print("Model Path Exists:", os.path.exists(model_path))
+    print("Item Embedding Path Exists:", os.path.exists(item_emb_path))
+    print("Graph Path Exists:", os.path.exists(graph_path))
 
-# 경로 존재 여부 확인
-print("Model Path Exists:", os.path.exists(model_path))
-print("Item Embedding Path Exists:", os.path.exists(item_emb_path))
-print("Graph Path Exists:", os.path.exists(graph_path))
+    # 모델의 state_dict 불러오기
+    state_dict = torch.load(model_path)
+    print("Keys in the loaded state_dict:")
+    for key in state_dict.keys():
+        print("  -", key)
 
-# 모델의 state_dict 불러오기
-state_dict = torch.load(model_path)
-print("Keys in the loaded state_dict:")
-for key in state_dict.keys():
-    print("  -", key)
+    # data.pkl 파일에서 vocab 불러오기
+    with open(data_path, "rb") as f:
+        dataset = pickle.load(f)
 
-# data.pkl 파일에서 vocab 불러오기
-with open(data_path, "rb") as f:
-    dataset = pickle.load(f)
+    # 현재 vocab 크기 확인
+    current_vocab = dataset["textset"]["item-texts"][1]
+    print("Current vocab size:", len(current_vocab))
 
-# 현재 vocab 크기 확인
-current_vocab = dataset["textset"]["item-texts"][1]
-print("Current vocab size:", len(current_vocab))
+    # 저장된 vocab 크기 확인
+    saved_vocab_size = state_dict["proj.inputs.item-texts.emb.weight"].shape[0]
+    print("Saved vocab size:", saved_vocab_size)
 
-# 저장된 vocab 크기 확인
-saved_vocab_size = state_dict["proj.inputs.item-texts.emb.weight"].shape[0]
-print("Saved vocab size:", saved_vocab_size)
+    # 모델, 임베딩, 그래프 로드
+    model, item_emb, graph = load_model_and_embeddings(model_path, item_emb_path, graph_path, data_path)
+    print("모델, 임베딩, 그래프를 로드 완료 했습니다")
 
+    # 아이템 임베딩 계산
+    h_item = item_emb.weight.detach()
+    print("아이템 임베딩 계산 완료 했습니다")
 
-# 모델, 임베딩, 그래프 로드
-model, item_emb, graph = load_model_and_embeddings(model_path, item_emb_path, graph_path, data_path)
-print("모델, 임베딩, 그래프를 로드 완료 했습니다")
-
-# 아이템 임베딩 계산
-h_item = item_emb.weight.detach()
-print("아이템 임베딩 계산 완료 했습니다")
+    # 새로운 데이터 예시
+    new_data = {
+        'category': 'Technology',
+        'subscriber_count': 10000,
+    }

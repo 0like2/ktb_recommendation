@@ -23,7 +23,9 @@ def main(args):
     dataset["train-graph"] = g_list[0]
 
     # 3. 모델 학습
-    model, item_emb = train(dataset, args)
+    # train 함수가 model, item_emb, creator_emb를 반환하도록 수정
+    model, item_emb, creator_emb = train(dataset, args)
+
     '''
     # 4. 학습된 모델 및 임베딩 저장
     model_path = os.path.join(args.output_dir, "saved_model.pth")
@@ -34,6 +36,7 @@ def main(args):
     # 4. 학습 완료 후 모델과 임베딩 저장
     model_save_path = os.path.join(args.output_dir, "saved_model.pth")
     item_embedding_save_path = os.path.join(args.output_dir, "item_embedding.pth")
+    creator_embedding_save_path = os.path.join(args.output_dir, "creator_embedding.pth")
 
     print(f"Saving model state_dict to {model_save_path}...")
     torch.save(model.state_dict(), model_save_path)
@@ -44,6 +47,10 @@ def main(args):
     print(f"모델이 {model_save_path}에 저장되었습니다.")
     print(f"아이템 임베딩이 {item_embedding_save_path}에 저장되었습니다.")
 
+    # creator_emb의 state_dict 저장 및 확인
+    print("Type of creator_emb state_dict before saving:", type(creator_emb.state_dict()))
+    torch.save(creator_emb.state_dict(), creator_embedding_save_path)  # state_dict로 저장
+    print(f"크리에이터 임베딩이 {creator_embedding_save_path}에 저장되었습니다.")
 
 if __name__ == "__main__":
     # Argument 파서 설정

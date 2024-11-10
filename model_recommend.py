@@ -110,8 +110,20 @@ def train(dataset, args):
     item_tensor = torch.arange(g.num_nodes(item_ntype))
     item_dataset = TensorDataset(item_tensor)
 
+    # `creator_tensor` 생성 -> 수정 부분
+    creator_tensor = torch.arange(g.num_nodes(user_ntype))
+    creator_dataset = TensorDataset(creator_tensor)
+
+
     dataloader_test = DataLoader(
         item_dataset,
+        batch_size=args.batch_size,
+        collate_fn=collator.collate_test,
+        num_workers=args.num_workers,
+    )
+
+    creator_dataloader_test = DataLoader(
+        creator_dataset,
         batch_size=args.batch_size,
         collate_fn=collator.collate_test,
         num_workers=args.num_workers,
@@ -126,6 +138,11 @@ def train(dataset, args):
     item_emb = nn.Embedding(
         g.num_nodes(item_ntype), args.hidden_dims, sparse=True
     )
+
+    creator_emb = nn.Embedding(
+        g.num_nodes(user_ntype), args.hidden_dims, sparse=True
+    )
+
     # Optimizer
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
     opt_emb = torch.optim.SparseAdam(item_emb.parameters(), lr=args.lr)
@@ -148,34 +165,6 @@ def train(dataset, args):
             opt.step()
             opt_emb.step()
 
-
-        # Evaluate
-        '''
-        model.eval()
-        with torch.no_grad():
-            item_batches = torch.arange(g.num_nodes(item_ntype)).split(
-                args.batch_size
-            )
-            h_item_batches = []
-            for blocks in tqdm.tqdm(dataloader_test):
-                for i in range(len(blocks)):
-                    blocks[i] = blocks[i].to(device)
-                h_item_batches.append(model.get_repr(blocks, item_emb))
-            h_item = torch.cat(h_item_batches, 0)
-
-            print(
-                evaluation.evaluate_nn(dataset, h_item, args.k, args.batch_size)
-            )
-        '''
-
-    '''
-    dataloader_test = DataLoader(
-        torch.arange(g.num_nodes(item_ntype)),
-        batch_size=args.batch_size,
-        collate_fn=collator.collate_test,
-        num_workers=args.num_workers,
-    )
-    '''
     dataloader_it = iter(dataloader)
 
     # Model
@@ -215,28 +204,17 @@ def train(dataset, args):
     # item_emb 저장 방식 확인
     item_emb_state_dict = item_emb.state_dict()
     print("Type of item_emb state_dict before saving:", type(item_emb_state_dict))
+
+    # craetor_emb 저장 방식 확인 -> 수정
+    creator_emb_state_dict = creator_emb.state_dict()
+    print("Type of item_emb state_dict before saving:", type(creator_emb_state_dict))
+
     print("Saving item_emb state_dict to item_embedding.pth...")
     torch.save(item_emb.state_dict(), os.path.join(args.output_dir, "item_embedding.pth"))
 
-    return model, item_emb  # 학습이 완료된 모델과 임베딩을 반환
+    # 수정
+    print("Type of creator_emb state_dict before saving:", type(creator_emb.state_dict()))
+    torch.save(creator_emb.state_dict(), os.path.join(args.output_dir, "creator_embedding.pth"))
 
-    '''
-        # Evaluate
-        model.eval()
-        with torch.no_grad():
-            item_batches = torch.arange(g.num_nodes(item_ntype)).split(
-                args.batch_size
-            )
-            h_item_batches = []
-            for blocks in tqdm.tqdm(dataloader_test):
-                for i in range(len(blocks)):
-                    blocks[i] = blocks[i].to(device)
+    return model, item_emb, creator_emb  # 학습이 완료된 모델과 임베딩을 반환
 
-                h_item_batches.append(model.get_repr(blocks, item_emb))
-            h_item = torch.cat(h_item_batches, 0)
-          
-            print(
-                evaluation.evaluate_nn(dataset, h_item, args.k, args.batch_size)
-            )
-          
-    '''
