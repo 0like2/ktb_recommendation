@@ -127,6 +127,11 @@ def process_data(directory,out_directory):
         else:
             g.nodes["item"].data[feature] = torch.LongTensor(pd.factorize(item_df[feature])[0])
 
+    # 그래프의 creator 노드 특성 확인
+    print("Creator node features:", g.nodes["creator"].data.keys())
+
+    # 그래프의 item 노드 특성 확인
+    print("Item node features:", g.nodes["item"].data.keys())
     # 6. Assign feature to Edge
     g.edges[("creator", "creator_to_item", "item")].data['similarity'] = torch.FloatTensor(similarities)
     g.edges[("item", "item_to_creator", "creator")].data['similarity'] = torch.FloatTensor(similarities)

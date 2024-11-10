@@ -26,33 +26,33 @@ from torch.utils.data import TensorDataset
 class PinSAGEModel(nn.Module):
     def __init__(self, full_graph, ntype, textset, hidden_dims, n_layers):
         super().__init__()
-
-        #testset 관련 부분
+        self.ntype = ntype
         self.proj = layers.LinearProjector(
             full_graph, ntype, textset, hidden_dims
         )
         self.sage = layers.SAGENet(hidden_dims, n_layers)
         self.scorer = layers.ItemToItemScorer(full_graph, ntype)
 
-    def forward(self, pos_graph, neg_graph, blocks, item_emb):
-        h_item = self.get_repr(blocks, item_emb)
-        pos_score = self.scorer(pos_graph, h_item)
-        neg_score = self.scorer(neg_graph, h_item)
+    def forward(self, pos_graph, neg_graph, blocks, embedding):
+        h_node = self.get_repr(blocks, embedding)
+        pos_score = self.scorer(pos_graph, h_node)
+        neg_score = self.scorer(neg_graph, h_node)
         return (neg_score - pos_score + 1).clamp(min=0)
 
-    def get_repr(self, blocks, item_emb):
-        # project features
-        h_item = self.proj(blocks[0].srcdata)
-        h_item_dst = self.proj(blocks[-1].dstdata)
+    def get_repr(self, blocks, embedding):
+        # ntype에 따라 feature projection을 달리 적용
+        if self.ntype == "item":
+            h_node = self.proj({k: v for k, v in blocks[0].srcdata.items() if k in self.proj.inputs})
+            h_node_dst = self.proj({k: v for k, v in blocks[-1].dstdata.items() if k in self.proj.inputs})
+        elif self.ntype == "creator":
+            h_node = self.proj({k: v for k, v in blocks[0].srcdata.items() if k in self.proj.inputs})
+            h_node_dst = self.proj({k: v for k, v in blocks[-1].dstdata.items() if k in self.proj.inputs})
 
-        # add to the item embedding itself
-        h_item = h_item + item_emb(blocks[0].srcdata[dgl.NID].cpu()).to(h_item)
-        h_item_dst = h_item_dst + item_emb(
-            blocks[-1].dstdata[dgl.NID].cpu()
-        ).to(h_item_dst)
+        # add to the embedding itself
+        h_node = h_node + embedding(blocks[0].srcdata[dgl.NID].cpu()).to(h_node)
+        h_node_dst = h_node_dst + embedding(blocks[-1].dstdata[dgl.NID].cpu()).to(h_node_dst)
 
-        return h_item_dst + self.sage(blocks, h_item)
-
+        return h_node_dst + self.sage(blocks, h_node)
 
 
 def train(dataset, args):
@@ -131,10 +131,15 @@ def train(dataset, args):
 
     dataloader_it = iter(dataloader)
 
-    # Model
-    model = PinSAGEModel(
+    # Model 정의
+    item_model = PinSAGEModel(
         g, item_ntype, textset, args.hidden_dims, args.num_layers
     ).to(device)
+
+    creator_model = PinSAGEModel(
+        g, user_ntype, None, args.hidden_dims, args.num_layers
+    ).to(device)
+
     item_emb = nn.Embedding(
         g.num_nodes(item_ntype), args.hidden_dims, sparse=True
     )
@@ -144,77 +149,72 @@ def train(dataset, args):
     )
 
     # Optimizer
-    opt = torch.optim.Adam(model.parameters(), lr=args.lr)
-    opt_emb = torch.optim.SparseAdam(item_emb.parameters(), lr=args.lr)
+    opt_item_model = torch.optim.Adam(item_model.parameters(), lr=args.lr)
+    opt_creator_model = torch.optim.Adam(creator_model.parameters(), lr=args.lr)
+    opt_item_emb = torch.optim.SparseAdam(item_emb.parameters(), lr=args.lr)
+    opt_creator_emb = torch.optim.SparseAdam(creator_emb.parameters(), lr=args.lr)
 
 
-    # For each batch of head-tail-negative triplets...
+    # 학습 시작
     for epoch_id in range(args.num_epochs):
-        model.train()
-        for batch_id in tqdm.trange(args.batches_per_epoch):
+        # item 모델 학습
+        item_model.train()
+        dataloader_it = iter(dataloader)  # item_model 학습용 반복자 초기화
+        for batch_id in tqdm.trange(args.batches_per_epoch, desc=f"Item Model Epoch {epoch_id+1}"):
             pos_graph, neg_graph, blocks = next(dataloader_it)
-            for i in range(len(blocks)):
-                blocks[i] = blocks[i].to(device)
+            blocks = [block.to(device) for block in blocks]
             pos_graph = pos_graph.to(device)
             neg_graph = neg_graph.to(device)
-
-            loss = model(pos_graph, neg_graph, blocks, item_emb).mean()
-            opt.zero_grad()
-            opt_emb.zero_grad()
+            loss = item_model(pos_graph, neg_graph, blocks, item_emb).mean()
+            opt_item_model.zero_grad()
+            opt_item_emb.zero_grad()
             loss.backward()
-            opt.step()
-            opt_emb.step()
+            opt_item_model.step()
+            opt_item_emb.step()
 
-    dataloader_it = iter(dataloader)
-
-    # Model
-    model = PinSAGEModel(
-        g, item_ntype, textset, args.hidden_dims, args.num_layers
-    ).to(device)
-    item_emb = nn.Embedding(
-        g.num_nodes(item_ntype), args.hidden_dims, sparse=True
-    )
-    # Optimizer
-    opt = torch.optim.Adam(model.parameters(), lr=args.lr)
-    opt_emb = torch.optim.SparseAdam(item_emb.parameters(), lr=args.lr)
-
-    # For each batch of head-tail-negative triplets...
-    for epoch_id in range(args.num_epochs):
-        model.train()
-        for batch_id in tqdm.trange(args.batches_per_epoch):
+        # creator 모델 학습
+        creator_model.train()
+        dataloader_it = iter(dataloader)  # creator_model 학습용 반복자 초기화
+        for batch_id in tqdm.trange(args.batches_per_epoch, desc=f"Creator Model Epoch {epoch_id+1}"):
             pos_graph, neg_graph, blocks = next(dataloader_it)
-            # Copy to GPU
-            for i in range(len(blocks)):
-                blocks[i] = blocks[i].to(device)
+            blocks = [block.to(device) for block in blocks]
             pos_graph = pos_graph.to(device)
             neg_graph = neg_graph.to(device)
-
-            loss = model(pos_graph, neg_graph, blocks, item_emb).mean()
-            opt.zero_grad()
-            opt_emb.zero_grad()
+            loss = creator_model(pos_graph, neg_graph, blocks, creator_emb).mean()
+            opt_creator_model.zero_grad()
+            opt_creator_emb.zero_grad()
             loss.backward()
-            opt.step()
-            opt_emb.step()
+            opt_creator_model.step()
+            opt_creator_emb.step()
+
 
     # 학습이 완료된 모델과 임베딩 저장
-    print("Saving model state_dict to saved_model.pth...")
-    torch.save(model.state_dict(), os.path.join(args.output_dir, "saved_model.pth"))
-    # item_emb를 state_dict 형식으로 저장하기 전 확인용 출력문 추가
+    print("Saving item_model and creator_model state_dicts...")
 
-    # item_emb 저장 방식 확인
+    # 저장 경로 설정
+    item_model_save_path = os.path.join(args.output_dir, "item_model.pth")
+    creator_model_save_path = os.path.join(args.output_dir, "creator_model.pth")
+    item_embedding_save_path = os.path.join(args.output_dir, "item_embedding.pth")
+    creator_embedding_save_path = os.path.join(args.output_dir, "creator_embedding.pth")
+
+    # item_model과 creator_model 저장
+    torch.save(item_model.state_dict(), item_model_save_path)
+    torch.save(creator_model.state_dict(), creator_model_save_path)
+    print(f"Item model state_dict saved to {item_model_save_path}")
+    print(f"Creator model state_dict saved to {creator_model_save_path}")
+
+    # item_emb의 state_dict 저장 및 확인
     item_emb_state_dict = item_emb.state_dict()
     print("Type of item_emb state_dict before saving:", type(item_emb_state_dict))
+    torch.save(item_emb_state_dict, item_embedding_save_path)
+    print(f"Item embedding saved to {item_embedding_save_path}")
 
-    # craetor_emb 저장 방식 확인 -> 수정
+    # creator_emb의 state_dict 저장 및 확인
     creator_emb_state_dict = creator_emb.state_dict()
-    print("Type of item_emb state_dict before saving:", type(creator_emb_state_dict))
+    print("Type of creator_emb state_dict before saving:", type(creator_emb_state_dict))
+    torch.save(creator_emb_state_dict, creator_embedding_save_path)
+    print(f"Creator embedding saved to {creator_embedding_save_path}")
 
-    print("Saving item_emb state_dict to item_embedding.pth...")
-    torch.save(item_emb.state_dict(), os.path.join(args.output_dir, "item_embedding.pth"))
-
-    # 수정
-    print("Type of creator_emb state_dict before saving:", type(creator_emb.state_dict()))
-    torch.save(creator_emb.state_dict(), os.path.join(args.output_dir, "creator_embedding.pth"))
-
-    return model, item_emb, creator_emb  # 학습이 완료된 모델과 임베딩을 반환
+    # 학습된 모델과 임베딩 반환
+    return item_model, creator_model, item_emb, creator_emb
 
