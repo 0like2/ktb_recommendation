@@ -40,13 +40,6 @@ print("샘플링된 heads:", heads)
 print("샘플링된 tails:", tails)
 print("샘플링된 neg_tails:", neg_tails)
 
-# 샘플링된 heads, tails, neg_tails가 item 노드로만 구성되었는지 확인
-is_item_head = all(g.ndata[dgl.NTYPE]["item"][heads] == g.get_ntype_id('item'))
-is_item_tail = all(g.ndata[dgl.NTYPE]["item"][tails] == g.get_ntype_id('item'))
-is_item_neg_tail = all(g.ndata[dgl.NTYPE]["item"][neg_tails] == g.get_ntype_id('item'))
-print("샘플링된 heads는 item 노드에 해당:", is_item_head)
-print("샘플링된 tails는 item 노드에 해당:", is_item_tail)
-print("샘플링된 neg_tails는 item 노드에 해당:", is_item_neg_tail)
 
 # NeighborSampler 테스트
 print("\n=== NeighborSampler 테스트 ===")

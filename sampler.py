@@ -26,7 +26,8 @@ def compact_and_copy(frontier, seeds):
     for col, data in frontier.edata.items():
         if col == dgl.EID:
             continue
-        block.edata[col] = data[block.edata[dgl.EID]]
+        block.edata[col] = data[block.edata[dgl.EID]]  # 엣지 데이터 복사
+        print(f"복사된 엣지 데이터: {col} - {block.edata[col]}")  # 엣지 데이터 출력
     return block
 
 
@@ -64,6 +65,51 @@ class ItemToItemBatchSampler(IterableDataset):
             yield heads[mask], tails[mask], neg_tails[mask]
 
 
+class RandomWalkSampler:
+    def __init__(self, g, metapath, num_walks, walk_length):
+        self.g = g
+        self.metapath = metapath
+        self.num_walks = num_walks
+        self.walk_length = walk_length
+
+    def __call__(self, seeds):
+        # 메타패스를 따른 random walk 샘플링
+        traces, types = dgl.sampling.random_walk(
+            self.g,
+            seeds,
+            metapath=self.metapath
+        )
+
+        # 노드와 엣지를 frontier에 포함
+        frontier = dgl.heterograph({
+            ('item', 'item_to_creator', 'creator'): (traces[0], traces[1]),
+            ('creator', 'creator_to_item', 'item'): (traces[1], traces[0])
+        })
+        return frontier
+
+
+class RandomWalkSampler:
+    def __init__(self, g, metapath, num_walks, walk_length):
+        self.g = g
+        self.metapath = metapath
+        self.num_walks = num_walks
+        self.walk_length = walk_length
+
+    def __call__(self, seeds):
+        # 메타패스를 따른 random walk 샘플링
+        traces, types = dgl.sampling.random_walk(
+            self.g,
+            seeds,
+            metapath=self.metapath
+        )
+
+        # 노드와 엣지를 frontier에 포함
+        frontier = dgl.heterograph({
+            ('item', 'item_to_creator', 'creator'): (traces[0], traces[1]),
+            ('creator', 'creator_to_item', 'item'): (traces[1], traces[0])
+        })
+        return frontier
+
 class NeighborSampler(object):
     def __init__(
         self,
@@ -83,6 +129,105 @@ class NeighborSampler(object):
         self.item_type = item_type
         self.user_to_item_etype = user_to_item_etype
         self.item_to_user_etype = item_to_user_etype
+
+        self.metapath = [
+            (self.item_type, "item_to_creator", self.user_type),
+            (self.user_type, "creator_to_item", self.item_type)
+        ]
+
+        self.samplers = [
+            RandomWalkSampler(
+                g,
+                self.metapath,
+                num_walks=num_random_walks,
+                walk_length=random_walk_length
+            )
+            for _ in range(num_layers)
+        ]
+
+    def sample_blocks(self, seeds):
+        seeds = seeds.view(-1)
+        blocks = []
+
+        for sampler in self.samplers:
+            # 각 샘플링 단계에서 frontier를 통해 block 생성
+            frontier = sampler(seeds)
+
+            # 디버깅 -> 삭제 필요
+            print("샘플링된 frontier 노드 타입:", frontier.ntypes)
+            print("샘플링된 frontier 엣지 타입:", frontier.etypes)
+
+            # dst_nodes에 item과 creator 노드 모두 포함
+            # dst_nodes를 명시적으로 설정하고, seeds는 src_nodes로 설정
+            block = dgl.to_block(
+                frontier,
+                seeds,  # seeds는 src_nodes로만 사용
+                dst_nodes=frontier.dstnodes['item'] + frontier.dstnodes['creator'],  # item과 creator 노드 모두 포함
+                include_dst_in_src=True
+            )
+
+            # 디버깅 -> 삭제 필요
+            print("블록 생성 후 노드 타입:", block.ntypes)
+            print("블록 srcdata NID 크기:", len(block.srcdata[dgl.NID]))
+            print("블록 dstdata NID 크기:", len(block.dstdata[dgl.NID]))
+
+            # 블록에 올바른 엣지 타입 설정
+            for etype in frontier.canonical_etypes:
+                block.edges[etype].data.update(frontier.edges[etype].data)
+
+            # block의 src, dst 노드에 대해 타입을 명확히 설정
+            for ntype in frontier.ntypes:
+                block.srcnodes[ntype].data.update(frontier.nodes[ntype].data)
+                block.dstnodes[ntype].data.update(frontier.nodes[ntype].data)
+
+            blocks.insert(0, block)
+            seeds = block.srcdata[dgl.NID]  # 다음 레이어의 샘플링을 위한 seeds 설정
+
+        return blocks
+
+
+    def sample_from_item_pairs(self, heads, tails, neg_tails):
+        pos_graph = dgl.graph(
+            (heads, tails), num_nodes=self.g.num_nodes(self.item_type) + self.g.num_nodes(self.user_type)
+        )
+        neg_graph = dgl.graph(
+            (heads, neg_tails), num_nodes=self.g.num_nodes(self.item_type) + self.g.num_nodes(self.user_type)
+        )
+        pos_graph, neg_graph = dgl.compact_graphs([pos_graph, neg_graph])
+        seeds = pos_graph.ndata[dgl.NID]
+
+        blocks = self.sample_blocks(seeds)
+        return pos_graph, neg_graph, blocks
+
+
+
+
+
+'''
+class NeighborSampler(object):
+    def __init__(
+        self,
+        g,
+        user_type,
+        item_type,
+        random_walk_length,
+        random_walk_restart_prob,
+        num_random_walks,
+        num_neighbors,
+        num_layers,
+        user_to_item_etype="creator_to_item",
+        item_to_user_etype="item_to_creator"
+    ):
+        self.g = g
+        self.user_type = user_type
+        self.item_type = item_type
+        self.user_to_item_etype = user_to_item_etype
+        self.item_to_user_etype = item_to_user_etype
+
+        self.metapath = [
+            (self.item_type, "item_to_creator", self.user_type),
+            (self.user_type, "creator_to_item", self.item_type)
+        ]
 
         self.samplers = [
             dgl.sampling.PinSAGESampler(
@@ -104,20 +249,48 @@ class NeighborSampler(object):
         for sampler in self.samplers:
             # 각 샘플링 단계에서 frontier를 통해 block 생성
             frontier = sampler(seeds)
-            block = compact_and_copy(frontier, seeds)
 
+            # 디버깅 -> 삭제 필요
+            print("샘플링된 frontier 노드 타입:", frontier.ntypes)
+            print("샘플링된 frontier 엣지 타입:", frontier.etypes)
+
+            # frontier에 creator 노드와 item_to_creator, creator_to_item 엣지가 포함되어 있는지 확인
+            if 'creator' in frontier.ntypes:
+                print("creator 노드가 frontier에 포함됨")
+            else:
+                print("creator 노드가 frontier에 없음")
+
+            if 'item_to_creator' in frontier.etypes:
+                print("item_to_creator 엣지가 frontier에 포함됨")
+            else:
+                print("item_to_creator 엣지가 frontier에 없음")
+
+            if 'creator_to_item' in frontier.etypes:
+                print("creator_to_item 엣지가 frontier에 포함됨")
+            else:
+                print("creator_to_item 엣지가 frontier에 없음")
+
+            block = dgl.to_block(frontier, seeds, include_dst_in_src=True)
+
+            # 디버깅 -> 삭제 필요
             print("블록 생성 후 노드 타입:", block.ntypes)
             print("블록 srcdata NID 크기:", len(block.srcdata[dgl.NID]))
             print("블록 dstdata NID 크기:", len(block.dstdata[dgl.NID]))
 
-            # 추가 노드 삽입 로직을 제거하고, 중복 방지를 위해 block.srcdata[dgl.NID]에서 고유한 노드만 사용
-            unique_seeds = torch.unique(block.srcdata[dgl.NID])
+            # 올바른 엣지 타입 설정
+            for etype in frontier.canonical_etypes:
+                block.edges[etype].data.update(frontier.edges[etype].data)
 
-            # 고유 노드 목록을 seeds로 사용하여 다음 샘플링 단계에 전달
-            seeds = unique_seeds
+            # block의 src, dst 노드에 대해 타입을 명확히 설정
+            for ntype in frontier.ntypes:
+                block.srcnodes[ntype].data.update(frontier.nodes[ntype].data)
+                block.dstnodes[ntype].data.update(frontier.nodes[ntype].data)
+
             blocks.insert(0, block)
+            seeds = block.srcdata[dgl.NID]
 
-            # 블록의 srcdata와 dstdata의 크기 및 노드 타입 확인
+
+            # 디버깅 -> 삭제 필요
             print(f"=== 블록 디버그 정보 ===")
             print(f"블록 {len(blocks)}의 ntypes: {block.ntypes}")
             print(f"블록 {len(blocks)}의 srcdata[dgl.NID] 크기: {len(block.srcdata[dgl.NID])}")
@@ -137,7 +310,7 @@ class NeighborSampler(object):
 
         blocks = self.sample_blocks(seeds, heads, tails, neg_tails)
         return pos_graph, neg_graph, blocks
-
+'''
 
 def assign_simple_node_features(ndata, g, ntype, assign_id=False):
     for col in g.nodes[ntype].data.keys():
@@ -145,7 +318,7 @@ def assign_simple_node_features(ndata, g, ntype, assign_id=False):
             continue
         induced_nodes = ndata[dgl.NID]
 
-        # 디버깅: induced_nodes 및 g 노드 데이터 크기 출력
+        # 디버깅 -> 삭제 필요
         print(f"{ntype} 노드 타입 - '{col}' 데이터 크기 비교:")
         print(f"induced_nodes (크기 {len(induced_nodes)}): {induced_nodes}")
         print(f"g.nodes[{ntype}].data[{col}] 크기: {g.nodes[ntype].data[col].shape}")
@@ -188,7 +361,7 @@ def assign_textual_node_features(ndata, textset, ntype):
 
 
 def assign_features_to_blocks(blocks, g, textset, ntype):
-    # 디버깅 -> 삭제
+    # 디버깅 -> 삭제 필요
     print("블록의 엣지 타입 확인")
     for block in blocks:
         print(f"Block node types: {block.ntypes}")
@@ -199,17 +372,6 @@ def assign_features_to_blocks(blocks, g, textset, ntype):
             print("creator_to_item 엣지가 없어요.")
         if "item_to_creator" not in block.etypes:
             print("item_to_creator 엣지가 없어요.")
-
-        # 엣지 타입 확인 -> 디버깅 : 삭제
-        if "creator_to_item" in block.etypes:
-            print("creator_to_item 엣지가 존재합니다.")
-        else:
-            print("creator_to_item 엣지가 존재하지 않습니다.")
-
-        if "item_to_creator" in block.etypes:
-            print("item_to_creator 엣지가 존재합니다.")
-        else:
-            print("item_to_creator 엣지가 존재하지 않습니다.")
 
     # 올바른 키를 사용해 노드 특성 할당
     if ntype == 'creator':
