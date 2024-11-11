@@ -4,6 +4,7 @@ import dgl
 import torch
 import pickle
 from sampler import ItemToItemBatchSampler, NeighborSampler
+from sampler import assign_features_to_blocks
 
 # 그래프와 데이터 파일 경로 설정
 output_dir = "../output"
@@ -17,6 +18,12 @@ g = graphs[0]  # 첫 번째 그래프를 사용
 print("불러온 그래프의 노드 타입:", g.ntypes)
 print("불러온 그래프의 엣지 타입:", g.etypes)
 
+# 1-1. 노드 타입 정보를 수동으로 추가
+g.ndata[dgl.NTYPE] = {
+    "creator": torch.full((g.num_nodes("creator"),), g.get_ntype_id("creator"), dtype=torch.long),
+    "item": torch.full((g.num_nodes("item"),), g.get_ntype_id("item"), dtype=torch.long),
+}
+
 # 2. 저장된 데이터 로드
 print("\n=== 저장된 데이터 로드 ===")
 with open(data_path, "rb") as f:
@@ -29,11 +36,19 @@ print("테스트 행렬:", dataset["test-matrix"])
 print("\n=== ItemToItemBatchSampler 테스트 ===")
 item_sampler = ItemToItemBatchSampler(g, 'creator', 'item', batch_size=2)
 heads, tails, neg_tails = next(iter(item_sampler))
-print("heads:", heads)
-print("tails:", tails)
-print("neg_tails:", neg_tails)
+print("샘플링된 heads:", heads)
+print("샘플링된 tails:", tails)
+print("샘플링된 neg_tails:", neg_tails)
 
-# 4. NeighborSampler 테스트
+# 샘플링된 heads, tails, neg_tails가 item 노드로만 구성되었는지 확인
+is_item_head = all(g.ndata[dgl.NTYPE]["item"][heads] == g.get_ntype_id('item'))
+is_item_tail = all(g.ndata[dgl.NTYPE]["item"][tails] == g.get_ntype_id('item'))
+is_item_neg_tail = all(g.ndata[dgl.NTYPE]["item"][neg_tails] == g.get_ntype_id('item'))
+print("샘플링된 heads는 item 노드에 해당:", is_item_head)
+print("샘플링된 tails는 item 노드에 해당:", is_item_tail)
+print("샘플링된 neg_tails는 item 노드에 해당:", is_item_neg_tail)
+
+# NeighborSampler 테스트
 print("\n=== NeighborSampler 테스트 ===")
 neighbor_sampler = NeighborSampler(
     g, 'creator', 'item', random_walk_length=2, random_walk_restart_prob=0.5,
@@ -41,7 +56,16 @@ neighbor_sampler = NeighborSampler(
 )
 seeds = torch.tensor([0, 1])
 blocks = neighbor_sampler.sample_blocks(seeds)
+
+# 각 블록에 노드 특성 추가
+for block in blocks:
+    assign_features_to_blocks([block], g, dataset["textset"], 'creator')
+    assign_features_to_blocks([block], g, dataset["textset"], 'item')
+
 print("생성된 블록 수:", len(blocks))
 for i, block in enumerate(blocks):
     print(f"블록 {i}의 노드 수:", block.number_of_nodes())
     print(f"블록 {i}의 엣지 수:", block.number_of_edges())
+    print(f"블록 {i}의 srcdata 키: {block.srcdata.keys()}")
+    print(f"블록 {i}의 dstdata 키: {block.dstdata.keys()}")
+

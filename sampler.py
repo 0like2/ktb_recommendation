@@ -99,22 +99,29 @@ class NeighborSampler(object):
 
     def sample_blocks(self, seeds, heads=None, tails=None, neg_tails=None):
         seeds = seeds.view(-1)
-
         blocks = []
+
         for sampler in self.samplers:
+            # 각 샘플링 단계에서 frontier를 통해 block 생성
             frontier = sampler(seeds)
-            if heads is not None:
-                eids = frontier.edge_ids(
-                    torch.cat([heads, heads]),
-                    torch.cat([tails, neg_tails]),
-                    return_uv=True,
-                )[2]
-                if len(eids) > 0:
-                    old_frontier = frontier
-                    frontier = dgl.remove_edges(old_frontier, eids)
             block = compact_and_copy(frontier, seeds)
-            seeds = block.srcdata[dgl.NID]
+
+            print("블록 생성 후 노드 타입:", block.ntypes)
+            print("블록 srcdata NID 크기:", len(block.srcdata[dgl.NID]))
+
+            # 추가 노드 삽입 로직을 제거하고, 중복 방지를 위해 block.srcdata[dgl.NID]에서 고유한 노드만 사용
+            unique_seeds = torch.unique(block.srcdata[dgl.NID])
+
+            # 고유 노드 목록을 seeds로 사용하여 다음 샘플링 단계에 전달
+            seeds = unique_seeds
             blocks.insert(0, block)
+
+            # 블록의 srcdata와 dstdata의 크기 및 노드 타입 확인
+            print(f"=== 블록 디버그 정보 ===")
+            print(f"블록 {len(blocks)}의 ntypes: {block.ntypes}")
+            print(f"블록 {len(blocks)}의 srcdata[dgl.NID] 크기: {len(block.srcdata[dgl.NID])}")
+            print(f"블록 {len(blocks)}의 dstdata[dgl.NID] 크기: {len(block.dstdata[dgl.NID])}")
+
         return blocks
 
     def sample_from_item_pairs(self, heads, tails, neg_tails):
@@ -136,7 +143,18 @@ def assign_simple_node_features(ndata, g, ntype, assign_id=False):
         if not assign_id and col == dgl.NID:
             continue
         induced_nodes = ndata[dgl.NID]
-        ndata[col] = g.nodes[ntype].data[col][induced_nodes]
+
+        # 디버깅: induced_nodes 및 g 노드 데이터 크기 출력
+        print(f"{ntype} 노드 타입 - '{col}' 데이터 크기 비교:")
+        print(f"induced_nodes (크기 {len(induced_nodes)}): {induced_nodes}")
+        print(f"g.nodes[{ntype}].data[{col}] 크기: {g.nodes[ntype].data[col].shape}")
+
+        try:
+            ndata[col] = g.nodes[ntype].data[col][induced_nodes]
+        except IndexError:
+            raise ValueError(f"인덱스 오류: induced_nodes 크기({len(induced_nodes)})와 "
+                             f"g.nodes[{ntype}].data[{col}] 크기({g.nodes[ntype].data[col].shape[0]})가 "
+                             "맞지 않습니다.")
 
 
 def assign_textual_node_features(ndata, textset, ntype):
@@ -169,17 +187,27 @@ def assign_textual_node_features(ndata, textset, ntype):
 
 
 def assign_features_to_blocks(blocks, g, textset, ntype):
-    assign_simple_node_features(blocks[0].srcdata, g, ntype)
-    assign_textual_node_features(blocks[0].srcdata, textset, ntype)
-    assign_simple_node_features(blocks[-1].dstdata, g, ntype)
-    assign_textual_node_features(blocks[-1].dstdata, textset, ntype)
+    # srcdata와 dstdata의 키를 확인
+    for block in blocks:
+        print(f"Block node types: {block.ntypes}")
+        print(f"Block srcdata keys: {block.srcdata.keys()}")
+        print(f"Block dstdata keys: {block.dstdata.keys()}")
+
+    # 올바른 키를 사용해 노드 특성 할당
+    if ntype == 'creator':
+        assign_simple_node_features(blocks[0].srcdata, g, 'creator')  # Creator 노드 데이터 할당
+        assign_simple_node_features(blocks[0].dstdata, g, 'creator')  # Creator 노드 데이터 할당
+    else:
+        assign_simple_node_features(blocks[0].srcdata, g, 'item')  # Item 노드 데이터 할당
+        assign_simple_node_features(blocks[0].dstdata, g, 'item')  # Item 노드 데이터 할당
 
 
-class PinSAGECollator(object):
-    def __init__(self, sampler, g, ntype, textset):
+class PinSAGECollator:
+    def __init__(self, sampler, g, item_type, user_type, textset):
         self.sampler = sampler
-        self.ntype = ntype
         self.g = g
+        self.item_type = item_type
+        self.user_type = user_type
         self.textset = textset
 
     def collate_train(self, batches):
@@ -187,11 +215,24 @@ class PinSAGECollator(object):
         pos_graph, neg_graph, blocks = self.sampler.sample_from_item_pairs(
             heads, tails, neg_tails
         )
-        assign_features_to_blocks(blocks, self.g, self.textset, self.ntype)
+
+        # Assign features for both item and creator types to each block
+        for block in blocks:
+            # Item features
+            assign_features_to_blocks(block, self.g, self.textset, self.item_type)
+            # Creator features
+            assign_features_to_blocks(block, self.g, self.textset, self.user_type)
+
         return pos_graph, neg_graph, blocks
 
     def collate_test(self, samples):
         batch = torch.LongTensor(samples)
         blocks = self.sampler.sample_blocks(batch)
-        assign_features_to_blocks(blocks, self.g, self.textset, self.ntype)
+
+        # Assign features for both item and creator types to each block
+        for block in blocks:
+            assign_features_to_blocks(block, self.g, self.textset, self.item_type)
+            assign_features_to_blocks(block, self.g, self.textset, self.user_type)
+
         return blocks
+
