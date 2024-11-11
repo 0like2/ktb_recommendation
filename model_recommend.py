@@ -63,7 +63,8 @@ def train(dataset, args):
     g = dataset["train-graph"]
     val_matrix = dataset["val-matrix"].tocsr()
     test_matrix = dataset["test-matrix"].tocsr()
-    item_texts = dataset["item-texts"]
+    item_texts = dataset["textset"]["item-texts"][0]  # 텍스트 리스트
+    creator_texts = dataset["textset"]["creator-texts"][0]  # 텍스트 리스트
     user_ntype = dataset["user-type"]
     item_ntype = dataset["item-type"]
 
@@ -74,15 +75,24 @@ def train(dataset, args):
     if textset is None:
         raise ValueError("Textset not found in dataset. Ensure data.pkl includes textset.")
 
-    vocab = textset["item-texts"][1]
-    vocab.set_default_index(vocab["<unk>"])
-    pad_var = textset["item-texts"][2]
+    # item-texts와 creator-texts 각각에 대해 vocab 설정
+    item_vocab = textset["item-texts"][1]
+    item_vocab.set_default_index(item_vocab["<unk>"])
+    item_pad_var = textset["item-texts"][2]
     batch_first = textset["item-texts"][3]
 
-    print("Loaded vocabulary size from data.pkl:", len(vocab))
+    creator_vocab = textset["creator-texts"][1]
+    creator_vocab.set_default_index(creator_vocab["<unk>"])
+    creator_pad_var = textset["creator-texts"][2]
 
-    # textset 그대로 사용
-    textset = {"item-texts": (item_texts, vocab, pad_var, batch_first)}
+    print("Loaded vocabulary size for item-texts:", len(item_vocab))
+    print("Loaded vocabulary size for creator-texts:", len(creator_vocab))
+
+    # textset 업데이트: item-texts와 creator-texts를 각각 포함
+    textset = {
+        "item-texts": (item_texts, item_vocab, item_pad_var, batch_first),
+        "creator-texts": (creator_texts, creator_vocab, creator_pad_var, batch_first)
+    }
 
 
     # Sampler

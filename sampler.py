@@ -75,8 +75,8 @@ class NeighborSampler(object):
         num_random_walks,
         num_neighbors,
         num_layers,
-        user_to_item_etype="creator_to_item",  # 새 인수 추가
-        item_to_user_etype="item_to_creator"   # 새 인수 추가
+        user_to_item_etype="creator_to_item",
+        item_to_user_etype="item_to_creator"
     ):
         self.g = g
         self.user_type = user_type
@@ -108,6 +108,7 @@ class NeighborSampler(object):
 
             print("블록 생성 후 노드 타입:", block.ntypes)
             print("블록 srcdata NID 크기:", len(block.srcdata[dgl.NID]))
+            print("블록 dstdata NID 크기:", len(block.dstdata[dgl.NID]))
 
             # 추가 노드 삽입 로직을 제거하고, 중복 방지를 위해 block.srcdata[dgl.NID]에서 고유한 노드만 사용
             unique_seeds = torch.unique(block.srcdata[dgl.NID])
@@ -126,10 +127,10 @@ class NeighborSampler(object):
 
     def sample_from_item_pairs(self, heads, tails, neg_tails):
         pos_graph = dgl.graph(
-            (heads, tails), num_nodes=self.g.num_nodes(self.item_type)
+            (heads, tails), num_nodes=self.g.num_nodes(self.item_type) + self.g.num_nodes(self.user_type)
         )
         neg_graph = dgl.graph(
-            (heads, neg_tails), num_nodes=self.g.num_nodes(self.item_type)
+            (heads, neg_tails), num_nodes=self.g.num_nodes(self.item_type) + self.g.num_nodes(self.user_type)
         )
         pos_graph, neg_graph = dgl.compact_graphs([pos_graph, neg_graph])
         seeds = pos_graph.ndata[dgl.NID]
@@ -187,11 +188,28 @@ def assign_textual_node_features(ndata, textset, ntype):
 
 
 def assign_features_to_blocks(blocks, g, textset, ntype):
-    # srcdata와 dstdata의 키를 확인
+    # 디버깅 -> 삭제
+    print("블록의 엣지 타입 확인")
     for block in blocks:
         print(f"Block node types: {block.ntypes}")
         print(f"Block srcdata keys: {block.srcdata.keys()}")
         print(f"Block dstdata keys: {block.dstdata.keys()}")
+        print(f"Block etypes: {block.etypes}")  # 엣지 타입 출력
+        if "creator_to_item" not in block.etypes:
+            print("creator_to_item 엣지가 없어요.")
+        if "item_to_creator" not in block.etypes:
+            print("item_to_creator 엣지가 없어요.")
+
+        # 엣지 타입 확인 -> 디버깅 : 삭제
+        if "creator_to_item" in block.etypes:
+            print("creator_to_item 엣지가 존재합니다.")
+        else:
+            print("creator_to_item 엣지가 존재하지 않습니다.")
+
+        if "item_to_creator" in block.etypes:
+            print("item_to_creator 엣지가 존재합니다.")
+        else:
+            print("item_to_creator 엣지가 존재하지 않습니다.")
 
     # 올바른 키를 사용해 노드 특성 할당
     if ntype == 'creator':
@@ -200,6 +218,7 @@ def assign_features_to_blocks(blocks, g, textset, ntype):
     else:
         assign_simple_node_features(blocks[0].srcdata, g, 'item')  # Item 노드 데이터 할당
         assign_simple_node_features(blocks[0].dstdata, g, 'item')  # Item 노드 데이터 할당
+
 
 
 class PinSAGECollator:
