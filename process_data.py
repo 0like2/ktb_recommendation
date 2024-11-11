@@ -115,6 +115,29 @@ def process_data(directory,out_directory):
     print("메타그래프:", g.metagraph().edges)  # 메타그래프 엣지 확인
 
     # 5. Assign features to Node
+    # 5.1 Creator 텍스트 특성 (channel_name, channel_category)
+    creator_texts = creator_df[['channel_name', 'channel_category']].fillna("").apply(lambda row: ' '.join(row),
+                                                                                      axis=1).tolist()
+    tokenizer = get_tokenizer(None)
+    creator_textlist = [tokenizer(text.lower()) for text in creator_texts]
+    creator_vocab = build_vocab_from_iterator(creator_textlist, specials=["<unk>", "<pad>"])
+    creator_vocab.set_default_index(creator_vocab["<unk>"])
+    creator_pad_var = creator_vocab["<pad>"]
+
+    # 5.2 Item 텍스트 특성 (item_content, title)
+    item_texts = item_df[['item_content', 'title']].fillna("").apply(lambda row: ' '.join(row), axis=1).tolist()
+    item_textlist = [tokenizer(text.lower()) for text in item_texts]
+    item_vocab = build_vocab_from_iterator(item_textlist, specials=["<unk>", "<pad>"])
+    item_vocab.set_default_index(item_vocab["<unk>"])
+    item_pad_var = item_vocab["<pad>"]
+
+    # 5.3 텍스트셋 저장
+    textset = {
+        "creator-texts": (creator_textlist, creator_vocab, creator_pad_var, True),
+        "item-texts": (item_textlist, item_vocab, item_pad_var, True)
+    }
+
+    # 6. Assign features to Node
     for feature in ["channel_name", "channel_category", "subscribers"]:
         if creator_df[feature].dtype == 'int64':
             g.nodes["creator"].data[feature] = torch.LongTensor(creator_df[feature].values)
@@ -136,13 +159,6 @@ def process_data(directory,out_directory):
     g.edges[("creator", "creator_to_item", "item")].data['similarity'] = torch.FloatTensor(similarities)
     g.edges[("item", "item_to_creator", "creator")].data['similarity'] = torch.FloatTensor(similarities)
 
-    item_texts = item_df['item_content'].fillna("").tolist()
-    tokenizer = get_tokenizer(None)
-    textlist = [tokenizer(text.lower()) for text in item_texts]
-    vocab = build_vocab_from_iterator(textlist, specials=["<unk>", "<pad>"])
-    vocab.set_default_index(vocab["<unk>"])  # OOV 토큰 처리 기본 인덱스 설정
-    pad_var = vocab["<pad>"]
-    textset = {"item-texts": (textlist, vocab, pad_var, True)}
 
     # 7. Train-validation-test split
     # This is a little bit tricky as we want to select the last interaction for test, and the
@@ -169,7 +185,8 @@ def process_data(directory,out_directory):
         edge_df.iloc[test_indices].pivot(index='creator_id', columns='item_id', values='similarity').fillna(0).values)
 
     # vocab 크기 확인
-    print("Vocabulary size in process_data.py:", len(vocab))
+    print("Item Vocabulary size in process_data.py:", len(item_vocab))
+    print("Creator Vocabulary size in process_data.py:", len(creator_vocab))
 
     # 그래프 및 데이터셋 저장
     os.makedirs(out_directory, exist_ok=True)
@@ -183,7 +200,8 @@ def process_data(directory,out_directory):
         "user-to-item-type": "creator_to_item",
         "item-to-user-type": "item_to_creator",
         "item-texts": item_texts,  # item-content를 리스트 형태로 추가
-        "textset": textset         # 생성한 textset 추가
+        "creator-texts": creator_texts,  # creator-texts 추가
+        "textset": textset  # 생성한 textset 추가
     }
 
     with open(os.path.join(out_directory, "data.pkl"), "wb") as f:
